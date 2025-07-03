@@ -1,7 +1,84 @@
-options=("PROD" "NON-PROD" "QUIT")
-echo -e "============================================================"
+#!/bin/bash
+
+# Function to set AWS_PROFILE persistently
+set_aws_profile_persistent() {
+    local profile=$1
+    local shell_rc=""
+    
+    # Determine which shell RC file to use
+    if [[ -f "$HOME/.bashrc" ]]; then
+        shell_rc="$HOME/.bashrc"
+    elif [[ -f "$HOME/.bash_profile" ]]; then
+        shell_rc="$HOME/.bash_profile"
+    elif [[ -f "$HOME/.profile" ]]; then
+        shell_rc="$HOME/.profile"
+    else
+        echo "❌ Could not find shell profile file (.bashrc, .bash_profile, or .profile)"
+        return 1
+    fi
+    
+    # Remove any existing AWS_PROFILE export line
+    sed -i '/^export AWS_PROFILE=/d' "$shell_rc"
+    
+    # Add the new AWS_PROFILE export
+    echo "export AWS_PROFILE=$profile" >> "$shell_rc"
+    
+    # Also set it for current session
+    export AWS_PROFILE=$profile
+    
+    echo -e "✅ AWS_PROFILE set to \e[32m$profile\e[0m in $shell_rc"
+    echo -e "✅ AWS_PROFILE set to \e[32m$profile\e[0m for current session"
+}
+
+# Function to show current AWS profile status
+show_aws_status() {
+    echo -e "\n============================================================"
+    echo -e "🔍 Current AWS Profile Status:"
+    echo -e "============================================================"
+    
+    if [[ -n "$AWS_PROFILE" ]]; then
+        echo -e "Current session AWS_PROFILE: \e[32m$AWS_PROFILE\e[0m"
+    else
+        echo -e "Current session AWS_PROFILE: \e[31mNot set\e[0m"
+    fi
+    
+    # Check if AWS_PROFILE is set in shell RC
+    local shell_rc=""
+    if [[ -f "$HOME/.bashrc" ]]; then
+        shell_rc="$HOME/.bashrc"
+    elif [[ -f "$HOME/.bash_profile" ]]; then
+        shell_rc="$HOME/.bash_profile"
+    elif [[ -f "$HOME/.profile" ]]; then
+        shell_rc="$HOME/.profile"
+    fi
+    
+    if [[ -n "$shell_rc" ]]; then
+        local persistent_profile=$(grep "^export AWS_PROFILE=" "$shell_rc" | cut -d'=' -f2)
+        if [[ -n "$persistent_profile" ]]; then
+            echo -e "Persistent AWS_PROFILE: \e[32m$persistent_profile\e[0m"
+        else
+            echo -e "Persistent AWS_PROFILE: \e[31mNot set\e[0m"
+        fi
+    fi
+    
+    # Test AWS credentials
+    echo -e "\n🔍 Testing AWS credentials..."
+    if aws sts get-caller-identity >/dev/null 2>&1; then
+        local caller_identity=$(aws sts get-caller-identity --query 'Arn' --output text 2>/dev/null)
+        echo -e "✅ AWS credentials are valid"
+        echo -e "   Caller: \e[32m$caller_identity\e[0m"
+    else
+        echo -e "❌ AWS credentials are invalid or expired"
+    fi
+    echo -e "============================================================"
+}
+
+# Show current status at the beginning
+show_aws_status
+
+options=("PROD" "NON-PROD" "STATUS" "QUIT")
+echo -e "\n============================================================"
 echo "Please pick an environment to log in:"
-credentials_file="C:\\Users\\vjayasingh\\.aws\\credentials"
 
 select opt in "${options[@]}"
 do
@@ -15,34 +92,16 @@ do
             aws-azure-login --profile tc-prod --mode=gui
 
             echo -e "\n============================================================"
-            echo -e "🚀 Executing command: \e[32mexport AWS_PROFILE=tc-prod\e[0m"
-            export AWS_PROFILE=tc-prod
-
-            echo -e "\n============================================================"
-            echo -e "🚀 Coping configs from tc-prod to default in credentials"
-            # Extract values from [tc-dev] section
-            aws_access_key_id=$(sed -n '/\[tc-prod\]/,/^\[/ s/^aws_access_key_id\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_secret_access_key=$(sed -n '/\[tc-prod\]/,/^\[/ s/^aws_secret_access_key\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_session_token=$(sed -n '/\[tc-prod\]/,/^\[/ s/^aws_session_token\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_expiration=$(sed -n '/\[tc-prod\]/,/^\[/ s/^aws_expiration\s*=\s*\(.*\)/\1/p' "$credentials_file")
-
-            echo -e "aws_access_key_id: $aws_access_key_id"
-            echo -e "\naws_access_key_id: $aws_secret_access_key"
-            echo -e "\aws_session_token: $aws_session_token"
-            echo -e "\aws_expiration: $aws_expiration"
-            # Replace values in [default] section
-            sed -i "/\[default\]/,/^\[/ s/aws_access_key_id\s*=.*/aws_access_key_id=$aws_access_key_id/" "$credentials_file"
-            sed -i "/\[default\]/,/^\[/ s/aws_secret_access_key\s*=.*/aws_secret_access_key=$aws_secret_access_key/" "$credentials_file"
-            # Escape special characters in the aws_session_token value for sed
-            escaped_aws_session_token=$(printf '%s\n' "$aws_session_token" | sed -e 's/[\/&]/\\&/g')
-            # Replace the aws_session_token value in the [default] section
-            sed -i "/\[default\]/,/^\[/ s/aws_session_token\s*=.*/aws_session_token=$escaped_aws_session_token/" "$credentials_file"
-            sed -i "/\[default\]/,/^\[/ s/aws_expiration\s*=.*/aws_expiration=$aws_expiration/" "$credentials_file"
-            
+            echo -e "🚀 Setting AWS_PROFILE to tc-prod persistently"
+            set_aws_profile_persistent "tc-prod"
 
             echo -e "\n============================================================"
             echo -e "🎉 \e[32mYou have successfully logged in to $opt AWS account\e[0m 🎉"
+            echo -e "🎉 \e[32mAWS_PROFILE is set to tc-prod and will persist across new terminal sessions\e[0m 🎉"
             echo -e "============================================================"
+            
+            # Show updated status
+            show_aws_status
             break
             ;;
         "NON-PROD")
@@ -54,35 +113,20 @@ do
             aws-azure-login --profile tc-dev --mode=gui
 
             echo -e "\n============================================================"
-            echo -e "🚀 Executing command: \e[32mexport AWS_PROFILE=tc-dev\e[0m"
-            export AWS_PROFILE=tc-dev
+            echo -e "🚀 Setting AWS_PROFILE to tc-dev persistently"
+            set_aws_profile_persistent "tc-dev"
 
-            echo -e "\n============================================================"
-            echo -e "🚀 Coping configs from tc-dev to default in credentials"
-            # Extract values from [tc-dev] section
-            aws_access_key_id=$(sed -n '/\[tc-dev\]/,/^\[/ s/^aws_access_key_id\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_secret_access_key=$(sed -n '/\[tc-dev\]/,/^\[/ s/^aws_secret_access_key\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_session_token=$(sed -n '/\[tc-dev\]/,/^\[/ s/^aws_session_token\s*=\s*\(.*\)/\1/p' "$credentials_file")
-            aws_expiration=$(sed -n '/\[tc-dev\]/,/^\[/ s/^aws_expiration\s*=\s*\(.*\)/\1/p' "$credentials_file")
-
-            echo -e "aws_access_key_id: $aws_access_key_id"
-            echo -e "\aws_secret_access_key: $aws_secret_access_key"
-            echo -e "\aws_session_token: $aws_session_token"
-            echo -e "\aws_expiration: $aws_expiration"
-            # Replace values in [default] section
-            sed -i "/\[default\]/,/^\[/ s/aws_access_key_id\s*=.*/aws_access_key_id=$aws_access_key_id/" "$credentials_file"
-            sed -i "/\[default\]/,/^\[/ s/aws_secret_access_key\s*=.*/aws_secret_access_key=$aws_secret_access_key/" "$credentials_file"
-            # Escape special characters in the aws_session_token value for sed
-            escaped_aws_session_token=$(printf '%s\n' "$aws_session_token" | sed -e 's/[\/&]/\\&/g')
-            # Replace the aws_session_token value in the [default] section
-            sed -i "/\[default\]/,/^\[/ s/aws_session_token\s*=.*/aws_session_token=$escaped_aws_session_token/" "$credentials_file"
-            sed -i "/\[default\]/,/^\[/ s/aws_expiration\s*=.*/aws_expiration=$aws_expiration/" "$credentials_file"
-            
-            
             echo -e "\n============================================================"
             echo -e "🎉 \e[32mYou have successfully logged in to $opt AWS account\e[0m 🎉"
+            echo -e "🎉 \e[32mAWS_PROFILE is set to tc-dev and will persist across new terminal sessions\e[0m 🎉"
             echo -e "============================================================"
+            
+            # Show updated status
+            show_aws_status
             break
+            ;;
+        "STATUS")
+            show_aws_status
             ;;
         "QUIT")
             break
